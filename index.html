@@ -15,6 +15,8 @@
   • v2.4：原图/增强双存、胶卷并排对比、硬件变焦、重力水平仪、百分位测光
   • v2.4.1：ImageCapture 全分辨率静照路径（Android Chrome 等），失败自动回退视频帧
   • v2.6：会话内 blob + objectURL（降内存）/ 胶卷批量保存
+  • v2.8：EXIF 保留（拍摄时间/相机信息，原图移植/无源生成）/ 死代码清理 / 结构收敛
+  • v2.9：快门区移到取景框下方（iOS 式）/ 搬回 v2.7（暗房 Worker/100dvh/智能优化）/ enhancePixels NaN 兜底
 -->
 <style>
 :root{
@@ -28,10 +30,10 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--ink);color:var(--cream);font-family:"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
-  min-height:100vh;overflow-x:hidden;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+  min-height:100vh;min-height:100dvh;overflow-x:hidden;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
 body.en{font-family:-apple-system,"Helvetica Neue",Arial,system-ui,sans-serif}
 button{font-family:inherit;border:none;background:none;color:inherit;cursor:pointer}
-#app{max-width:560px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;position:relative}
+#app{max-width:560px;margin:0 auto;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;position:relative}
 [hidden]{display:none!important}
 
 header{display:flex;align-items:center;justify-content:space-between;
@@ -195,7 +197,7 @@ body.en .save-panel .sopt{letter-spacing:1px}
 .save-panel .sopt:active{transform:scale(.98)}
 
 .shutter-zone{display:flex;align-items:center;justify-content:space-between;
-  padding:18px 44px calc(20px + env(safe-area-inset-bottom));margin-top:6px}
+  padding:14px 44px;margin-top:6px}
 .side-btn{width:52px;height:52px;border-radius:12px;border:1px solid var(--line);
   display:flex;align-items:center;justify-content:center;color:var(--dim);background:rgba(201,162,39,.05);
   font-size:11px;letter-spacing:1px;overflow:hidden;position:relative}
@@ -250,6 +252,10 @@ body.en .sgrp{letter-spacing:1px}
   color:var(--dim);font-size:13px;letter-spacing:4px;background:rgba(201,162,39,.06)}
 body.en .editreset{letter-spacing:1px}
 .editreset:active{transform:scale(.97);background:rgba(201,162,39,.14)}
+.smartbtn{width:100%;margin:2px 0 10px;padding:12px;border-radius:12px;font-size:14px;font-weight:700;letter-spacing:2px;
+  color:#241a06;background:linear-gradient(180deg,var(--gold-b),var(--gold));border:1px solid var(--gold-d)}
+body.en .smartbtn{letter-spacing:.5px}
+.smartbtn:active{transform:scale(.97)}
 .rv-auto{margin-top:10px;padding:10px 14px;background:rgba(106,168,216,.07);border:1px solid rgba(106,168,216,.3);
   border-radius:var(--r);font-size:12px;color:var(--dim);line-height:1.9;letter-spacing:.5px}
 .rv-auto b{color:var(--blue);letter-spacing:1px}
@@ -351,6 +357,14 @@ body.en .btn{letter-spacing:1px}
     <button class="tbtn" id="burstBtn"><span data-i18n="burst">连拍</span><span class="v" id="burstVal">关</span></button>
   </div>
 
+  <div class="shutter-zone">
+    <button class="side-btn thumb" id="thumbBtn" aria-label="album"><span data-i18n="album">相册</span></button>
+    <button class="shutter" id="shutter" aria-label="shutter"></button>
+    <button class="side-btn" id="flipBtn" aria-label="flip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9a8 8 0 0114-3M20 15a8 8 0 01-14 3"/><path d="M18 2v4h-4M6 22v-4h4"/></svg>
+    </button>
+  </div>
+
   <div class="tips open" id="tips">
     <button class="tips-head" id="tipsHead">
       <span class="t" id="tipsTitle">人像 · 专业提示</span>
@@ -370,15 +384,7 @@ body.en .btn{letter-spacing:1px}
     </div>
   </div>
 
-  <div class="shutter-zone">
-    <button class="side-btn thumb" id="thumbBtn" aria-label="album"><span data-i18n="album">相册</span></button>
-    <button class="shutter" id="shutter" aria-label="shutter"></button>
-    <button class="side-btn" id="flipBtn" aria-label="flip">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9a8 8 0 0114-3M20 15a8 8 0 01-14 3"/><path d="M18 2v4h-4M6 22v-4h4"/></svg>
-    </button>
-  </div>
-
-  <p class="foot"><span data-i18n="footNote">iPhone 网页无硬件对焦接口；点按为软件测光点，夜景多帧合成降噪；支持时走 ImageCapture 全分辨率</span> · v2.6</p>
+  <p class="foot"><span data-i18n="footNote">iPhone 网页无硬件对焦接口；点按为软件测光点，夜景多帧合成降噪；支持时走 ImageCapture 全分辨率</span> · v2.9</p>
 </div>
 
 <div id="review" role="dialog" aria-label="review">
@@ -404,7 +410,10 @@ body.en .btn{letter-spacing:1px}
     </div>
     <div id="paneEdit" hidden>
       <div class="rv-sec" style="margin-top:12px">
-        <div style="padding:12px 16px 2px"><div class="filtrow" id="filtRow"></div></div>
+        <div style="padding:12px 16px 2px">
+          <button class="smartbtn" id="smartBtn" data-i18n="smartEnhance">✨ 智能优化</button>
+          <div class="filtrow" id="filtRow"></div>
+        </div>
         <div style="padding:0 16px 14px"><div id="sliders"></div>
         <button class="editreset" id="editReset" data-i18n="resetEdits">还原</button></div>
       </div>
@@ -464,7 +473,7 @@ var STR={
   autoOn:"专业自动已开启",toManual:"已切手动：场景与变焦由你定",
   sceneToast:"识景：",tuned:"（自动调参",zoomIs:" · 变焦 ",closeP:"）",
   tilt:"机身有点歪（",tilt2:"°），摆正再拍更专业",
-  needCamFirst:"先开启相机",camNotReady:"相机还没准备好",saved:"已保存，去相册查看",
+  needCamFirst:"先开启相机",camNotReady:"相机还没准备好",capFail:"拍摄失败，请重试",saved:"已保存，去相册查看",
   noCam:"此浏览器不支持实时取景",cantOpen:"无法打开相机：",useSys:"<br>可用「调用系统相机」走系统相机，拍完同样进专业复盘",
   notHttps:"当前不是 HTTPS，iPhone 不给摄像头权限",
   noMotion:"未获得动作权限，水平仪不可用",levelFail:"水平仪启动失败",level:"水平",
@@ -479,7 +488,7 @@ var STR={
   sessionRoll:"本次胶卷",clearRoll:"清空",saveAll:"保存全部",holdStill:"请保持稳定…",meterSet:"测光点已设",
   counting:"倒计时",compareSel:"对比选中",compareTitle:"并排对比",closeCmp:"关闭对比",
   saveAs:"保存方式",saveEnhanced:"保存增强版",saveRaw:"保存原图",saveBoth:"两张都存",cancel:"取消",
-  pickTwo:"请选中两张再对比",hwZoom:"硬件变焦",dlDone:"下载已开始；iPhone 请到文件›下载项存入相册"},
+  pickTwo:"请选中两张再对比",hwZoom:"硬件变焦",dlDone:"下载已开始；iPhone 请到文件›下载项存入相册",smartEnhance:"✨ 智能优化",enhanced:"已智能优化，可再微调"},
  en:{appName:"Framing Assistant",appSub:"Pro Auto · Scene AI",aiOn:"AI on",aiOff:"AI off",
   needCam:"Live view needs camera permission<br>Open this page in iPhone Safari over HTTPS",
   enableCam:"Enable Camera",sysCam:"System Camera",ghTip:"Or host this file on GitHub Pages and open in Safari",
@@ -495,7 +504,7 @@ var STR={
   autoOn:"Pro Auto ON",toManual:"Manual: you control scene & zoom",
   sceneToast:"Scene: ",tuned:"(auto-tuned",zoomIs:" · zoom ",closeP:")",
   tilt:"Phone tilted (",tilt2:"°) — straighten for a pro shot",
-  needCamFirst:"Enable the camera first",camNotReady:"Camera not ready yet",saved:"Saved — check your album",
+  needCamFirst:"Enable the camera first",camNotReady:"Camera not ready yet",capFail:"Capture failed — try again",saved:"Saved — check your album",
   noCam:"Live view not supported in this browser",cantOpen:"Can't open camera: ",useSys:"<br>Use 'System Camera' instead — review still applies",
   notHttps:"Not HTTPS — iPhone blocks camera access",
   noMotion:"Motion permission denied — level unavailable",levelFail:"Level failed to start",level:"Level",
@@ -510,7 +519,7 @@ var STR={
   sessionRoll:"Session roll",clearRoll:"Clear",saveAll:"Save all",holdStill:"Hold still…",meterSet:"Meter point set",
   counting:"Countdown",compareSel:"Compare",compareTitle:"Side by side",closeCmp:"Close",
   saveAs:"Save as",saveEnhanced:"Save enhanced",saveRaw:"Save original",saveBoth:"Save both",cancel:"Cancel",
-  pickTwo:"Select two photos to compare",hwZoom:"Hardware zoom",dlDone:"Download started — iPhone: save from Files › Downloads"}
+  pickTwo:"Select two photos to compare",hwZoom:"Hardware zoom",dlDone:"Download started — iPhone: save from Files › Downloads",smartEnhance:"✨ Auto Enhance",enhanced:"Auto-enhanced — fine-tune freely"}
 };
 var LANG="zh";
 try{LANG=localStorage.getItem("pa_lang")||"zh";}catch(e){}
@@ -601,8 +610,8 @@ var SCENES=[
 var video=document.getElementById('video'),novideo=document.getElementById('novideo');
 var stream=null,facing='environment',sceneIdx=0,gridMode=0,levelOn=false;
 var autoOn=true,zoom=1,zoomManual=false,sceneManual=false,sceneLockUntil=0,voteScene=-1,voteCount=0;
-var lastPhoto=null,lastRaw=null,lastAdjust="",lastStats=null,lastZoom=1,lastSceneIdx=0;
-var reviewOpen=false,objectURLs=[];
+var lastPhoto=null,lastRaw=null,lastAdjust="",lastZoom=1,lastSceneIdx=0;
+var reviewOpen=false;
 var meterPoint=null; /* {nx,ny} 0-1 相对取景框 */
 var timerMode=0; /* 0 off, 3, 10 */
 var burstMode=0; /* 0 off, 3, 5 */
@@ -745,18 +754,50 @@ function applyHwZoom(){
   }
  }catch(e){}
 }
+/* 相机健康 + 自动恢复：iOS 上视频流可能死掉且不自动恢复，自动重启免得用户手动刷新 */
+var camStarting=false;
+function camHealthy(){
+ try{
+  return !!(stream&&stream.active&&videoTrack&&videoTrack.readyState==='live'&&
+   video.videoWidth>0&&video.readyState>=2&&!video.paused&&!video.ended);
+ }catch(e){return false;}
+}
+function ensureCam(){
+ return new Promise(function(res){
+  if(camHealthy()){res(true);return;}
+  try{startCam();}catch(e){res(false);return;}
+  var t0=Date.now();
+  (function wait(){
+   if(camHealthy()){res(true);return;}
+   if(Date.now()-t0>7000){res(false);return;}
+   setTimeout(wait,250);
+  })();
+ });
+}
+function frameBlackLevel(frame){
+ try{
+  var c=document.createElement('canvas');c.width=16;c.height=16;
+  var x=c.getContext('2d');
+  x.drawImage(frame.canvas,0,0,16,16);
+  var d=x.getImageData(0,0,16,16).data,s=0,i;
+  for(i=0;i<d.length;i+=4)s+=d[i]+d[i+1]+d[i+2];
+  return s/(d.length/4);
+ }catch(e){return -1;}
+}
 function startCam(){
+ if(camStarting)return;
  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){camFallback(T('noCam'));return;}
+ camStarting=true;
  stopStream();novideo.style.display='flex';
  var constraints={video:{facingMode:{ideal:facing},width:{ideal:3840},height:{ideal:2160}},audio:false};
  navigator.mediaDevices.getUserMedia(constraints)
- .then(bindTrack)
+ .then(function(s){camStarting=false;bindTrack(s);})
  .catch(function(e){
   if(e.name==='OverconstrainedError'||e.name==='ConstraintNotSatisfiedError'){
    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:false})
-   .then(bindTrack)
-   .catch(function(e2){camFallback(T('cantOpen')+(e2.name||''));});
-  }else camFallback(T('cantOpen')+(e.name||''));
+   .then(function(s){camStarting=false;bindTrack(s);})
+   .catch(function(e2){camStarting=false;camFallback(T('cantOpen')+(e2.name||''));});
+  }else{camStarting=false;camFallback(T('cantOpen')+(e.name||''));}
  });
 }
 function camFallback(msg){
@@ -787,7 +828,7 @@ function onFileChosen(e){
  var f=e.target.files[0];if(!f)return;
  /* File 本身就是 Blob，直接建 URL，不走 base64 */
  revokePhoto(lastPhoto);revokePhoto(lastRaw);
- var p=makePhoto(f);
+ var p=makePhoto(f,f.lastModified||Date.now());
  openReview(p,p,T('albumNoTune'),1,sceneIdx,false);
  e.target.value='';
 }
@@ -877,7 +918,6 @@ function sampleMeterAndPreview(){
   tag.textContent=T('spotMeter')+' '+(ev>0?'+':'')+ev.toFixed(1)+'EV';
   var bri=1+clamp(ev*0.2,-0.3,0.4);
   video.style.filter='brightness('+bri.toFixed(3)+')';
-  lastStats={lum:lum,spot:true};
  }catch(err){}
 }
 
@@ -912,7 +952,6 @@ function analyze(){
  else if(skyF>0.30)id='landscape';
  else if(warmF>0.22&&lum>70)id='food';
  else id='street';
- lastStats={lum:lum};
  if(Date.now()<sceneLockUntil)return;
  var idx=sceneById(id);
  if(idx===voteScene){voteCount++;}else{voteScene=idx;voteCount=1;}
@@ -1028,6 +1067,7 @@ function enhancePixels(img,s,opts){
  var d=img.data,n=d.length/4,i,r,g,b;
  var curLum=opts.spotLum!=null?opts.spotLum:frameLuminance(img);
  var gain=clamp(s.targetLum/Math.max(1,curLum),0.65,1.7);
+ if(!isFinite(gain))gain=1; /* 极端脏数据兜底，避免整图变黑 */
  /* 高光保护：已有大量过曝时限制提亮 */
  var hp=highlightPct(img);
  if(hp>0.04&&gain>1){gain=1+(gain-1)*clamp(1-hp*6,0.15,1);}
@@ -1147,27 +1187,25 @@ function blobToFrame(blob){
     frame.fullRes=true;
     frame.srcW=w;
     frame.srcH=h;
+    frame.exifSrc=blob; /* 相机直出 JPEG，EXIF 在保存时移植 */
     resolve(frame);
    }catch(e){resolve(null);}
   }
-  if(typeof createImageBitmap==='function'){
-   createImageBitmap(blob).then(function(bmp){
-    fromDrawable(bmp,bmp.width,bmp.height);
-    try{bmp.close();}catch(e){}
-   }).catch(function(){
-    /* 回退 Image */
-    var url=URL.createObjectURL(blob);
-    var img=new Image();
-    img.onload=function(){fromDrawable(img,img.naturalWidth,img.naturalHeight);URL.revokeObjectURL(url);};
-    img.onerror=function(){URL.revokeObjectURL(url);resolve(null);};
-    img.src=url;
-   });
-  }else{
+  function fromImageURL(){
+   /* createImageBitmap 不可用/失败时的回退 */
    var url=URL.createObjectURL(blob);
    var img=new Image();
    img.onload=function(){fromDrawable(img,img.naturalWidth,img.naturalHeight);URL.revokeObjectURL(url);};
    img.onerror=function(){URL.revokeObjectURL(url);resolve(null);};
    img.src=url;
+  }
+  if(typeof createImageBitmap==='function'){
+   createImageBitmap(blob).then(function(bmp){
+    fromDrawable(bmp,bmp.width,bmp.height);
+    try{bmp.close();}catch(e){}
+   }).catch(fromImageURL);
+  }else{
+   fromImageURL();
   }
  });
 }
@@ -1204,11 +1242,12 @@ async function captureFrame(){
 /* 夜景多帧平均（走统一 captureFrame，自动全分辨率/视频帧） */
 function captureMultiFrame(count,intervalMs,onProgress){
  return new Promise(async function(resolve){
-  var frames=[],idx=0,anyFull=false;
+  var frames=[],idx=0,anyFull=false,firstExif=null;
   async function grab(){
    var f=await captureFrame();
    if(f){
     if(f.fullRes)anyFull=true;
+    if(!firstExif&&f.exifSrc)firstExif=f.exifSrc;
     try{frames.push(f.ctx.getImageData(0,0,f.w,f.h));}catch(e){}
    }
    idx++;
@@ -1239,7 +1278,7 @@ function captureMultiFrame(count,intervalMs,onProgress){
     for(j=0;j<n;j++)out.data[j]=Math.round(acc[j]*inv);
     var c=document.createElement('canvas');c.width=w;c.height=h;
     var x2=c.getContext('2d');x2.putImageData(out,0,0);
-    resolve({canvas:c,ctx:x2,w:w,h:h,multi:true,fullRes:anyFull});
+    resolve({canvas:c,ctx:x2,w:w,h:h,multi:true,fullRes:anyFull,exifSrc:firstExif});
    }else{
     setTimeout(function(){grab();},intervalMs);
    }
@@ -1264,14 +1303,124 @@ function spotLumFromImage(imgData,w,h){
 }
 
 /* 照片记录：会话内用 {blob, url} 代替 dataURL 字符串，降内存；url 用完即 revoke */
-function makePhoto(blob){return {blob:blob,url:URL.createObjectURL(blob)};}
-function dupPhoto(p){return {blob:p.blob,url:URL.createObjectURL(p.blob)};}
+function makePhoto(blob,exifDate){var p={blob:blob,url:URL.createObjectURL(blob)};if(exifDate)p.exifDate=exifDate;return p;}
+function dupPhoto(p){var q={blob:p.blob,url:URL.createObjectURL(p.blob)};if(p.exifDate)q.exifDate=p.exifDate;return q;}
 function revokePhoto(p){if(p&&p.url){try{URL.revokeObjectURL(p.url);}catch(e){}}}
 function revokeURL(u){if(u&&u.indexOf('blob:')===0){try{URL.revokeObjectURL(u);}catch(e){}}}
-function canvasToPhoto(canvas,q){
+function canvasToPhoto(canvas,q,exifSrc,exifDate){
  return new Promise(function(res){
-  canvas.toBlob(function(bl){res(bl?makePhoto(bl):null);},'image/jpeg',q||0.93);
+  var done=false;
+  var timer=setTimeout(function(){if(!done){done=true;res(null);}},8000);
+  function safeRes(v){if(done)return;done=true;clearTimeout(timer);res(v);}
+  try{
+   canvas.toBlob(function(bl){
+    if(!bl){safeRes(null);return;}
+    applyExif(bl,exifSrc||null,exifDate||Date.now()).then(function(bl2){
+     safeRes(makePhoto(bl2,exifDate||Date.now()));
+    }).catch(function(){safeRes(null);});
+   },'image/jpeg',q||0.93);
+  }catch(e){safeRes(null);}
  });
+}
+
+/* EXIF：在照片诞生点一次注入，之后全链路自动携带
+   · 相机直出 JPEG（ImageCapture / 相册原图）：移植原 EXIF，Orientation 强制为 1（像素已按预览方向排好）
+   · 视频帧等无 EXIF 来源：写最小 EXIF（拍摄时间 + 软件名），不伪造机型 */
+function exifApp1Range(u8){
+ if(!(u8.length>4&&u8[0]===0xFF&&u8[1]===0xD8))return null;
+ var p=2,n=u8.length;
+ while(p+4<=n){
+  if(u8[p]!==0xFF)return null;
+  var m=u8[p+1];
+  if(m===0xD9||m===0xDA)return null;
+  if(m===0x01||(m>=0xD0&&m<=0xD7)){p+=2;continue;}
+  var len=(u8[p+2]<<8)|u8[p+3];
+  if(len<2||p+2+len>n)return null;
+  if(m===0xE1&&u8[p+4]===0x45&&u8[p+5]===0x78&&u8[p+6]===0x69&&u8[p+7]===0x66&&u8[p+8]===0&&u8[p+9]===0)
+   return [p,p+2+len];
+  p+=2+len;
+ }
+ return null;
+}
+function tiffSetOrientation(seg){
+ var t=seg.slice();
+ if(t.length<20||t[4]!==0x45)return t;
+ var bo=(t[10]===0x49&&t[11]===0x49)?'II':((t[10]===0x4D&&t[11]===0x4D)?'MM':null);
+ if(!bo)return t;
+ var le=bo==='II';
+ var dv=new DataView(t.buffer,t.byteOffset,t.byteLength);
+ function u16(o){return dv.getUint16(o,le);}
+ function u32(o){return dv.getUint32(o,le);}
+ var ifd0=10+u32(14);
+ if(ifd0+2<=t.length){
+  var n=u16(ifd0);
+  for(var i=0;i<n;i++){
+   var e=ifd0+2+i*12;
+   if(e+12>t.length)break;
+   if(u16(e)===0x0112&&u16(e+2)===3&&u32(e+4)===1){dv.setUint16(e+8,1,le);break;}
+  }
+ }
+ return t;
+}
+function buildExifApp1(dateMs){
+ var dt=new Date(dateMs||Date.now());
+ function p2(n){return (n<10?'0':'')+n;}
+ var ds=dt.getFullYear()+':'+p2(dt.getMonth()+1)+':'+p2(dt.getDate())+' '+p2(dt.getHours())+':'+p2(dt.getMinutes())+':'+p2(dt.getSeconds());
+ var sw='Framing Assistant',swB=[],dsB=[],i;
+ for(i=0;i<sw.length;i++)swB.push(sw.charCodeAt(i));swB.push(0);
+ for(i=0;i<ds.length;i++)dsB.push(ds.charCodeAt(i));dsB.push(0);
+ var t=new Uint8Array(68+swB.length+dsB.length),dv=new DataView(t.buffer);
+ function w16(o,v){dv.setUint16(o,v,true);}
+ function w32(o,v){dv.setUint32(o,v,true);}
+ t[0]=0x49;t[1]=0x49;t[2]=0x2A;t[3]=0x00;w32(4,8);
+ w16(8,3);
+ var e=10;
+ function entry(tag,type,count,val){w16(e,tag);w16(e+2,type);w32(e+4,count);w32(e+8,val);e+=12;}
+ entry(0x0112,3,1,1);
+ entry(0x0131,2,swB.length,68);
+ entry(0x8769,4,1,50);
+ w32(e,0);e+=4;
+ w16(50,1);e=52;
+ entry(0x9003,2,dsB.length,68+swB.length);
+ w32(e,0);
+ t.set(swB,68);t.set(dsB,68+swB.length);
+ var seg=new Uint8Array(10+t.length);
+ seg[0]=0xFF;seg[1]=0xE1;
+ var dl=6+t.length+2;seg[2]=(dl>>8)&0xFF;seg[3]=dl&0xFF;
+ seg[4]=0x45;seg[5]=0x78;seg[6]=0x69;seg[7]=0x66;seg[8]=0;seg[9]=0;
+ seg.set(t,10);
+ return seg;
+}
+function jpegInjectApp1(jpegU8,app1){
+ var out=new Uint8Array(jpegU8.length+app1.length);
+ out[0]=0xFF;out[1]=0xD8;
+ out.set(app1,2);
+ out.set(jpegU8.subarray(2),2+app1.length);
+ return out;
+}
+function applyExif(outBlob,exifSrcBlob,fallbackDate){
+ return outBlob.arrayBuffer().then(function(ab){
+  var u8=new Uint8Array(ab);
+  if(!(u8.length>4&&u8[0]===0xFF&&u8[1]===0xD8&&u8[2]===0xFF))return outBlob;
+  function done(seg){
+   try{return new Blob([jpegInjectApp1(u8,seg)],{type:'image/jpeg'});}
+   catch(e){return outBlob;}
+  }
+  function minimal(){try{return done(buildExifApp1(fallbackDate));}catch(e){return outBlob;}}
+  if(exifSrcBlob){
+   return exifSrcBlob.arrayBuffer().then(function(sab){
+    try{
+     var r=exifApp1Range(new Uint8Array(sab));
+     if(r){
+      var seg=new Uint8Array(sab).slice(r[0],r[1]);
+      return done(tiffSetOrientation(seg));
+     }
+    }catch(e){}
+    return minimal();
+   }).catch(minimal);
+  }
+  return minimal();
+ }).catch(function(){return outBlob;});
 }
 
 /* 会话胶卷 + 并排对比 */
@@ -1411,8 +1560,15 @@ async function doCaptureOne(){
   frame=await captureFrame();
  }
  if(!frame)return null;
+ var _bl=frameBlackLevel(frame);
+ if(_bl>=0&&_bl<2&&!camHealthy()){
+  toast(T('camNotReady'));
+  try{startCam();}catch(e){}
+  return null;
+ }
 
- var rawPhoto=await canvasToPhoto(frame.canvas,0.93);
+ var capDate=Date.now();
+ var rawPhoto=await canvasToPhoto(frame.canvas,0.93,frame.exifSrc||null,capDate);
  if(!rawPhoto)return null;
  var adj="",finalPhoto=rawPhoto;
  if(autoOn){
@@ -1428,7 +1584,7 @@ async function doCaptureOne(){
     adj=(adj?adj+' · ':'')+T('fullRes')+(frame.srcW?' '+frame.srcW+'×'+frame.srcH:'');
    }
    frame.ctx.putImageData(img,0,0);
-   finalPhoto=await canvasToPhoto(frame.canvas,0.93)||rawPhoto;
+   finalPhoto=await canvasToPhoto(frame.canvas,0.93,frame.exifSrc||null,capDate)||rawPhoto;
   }catch(e){
    if(frame.fullRes)adj=T('fullRes')+(frame.srcW?' '+frame.srcW+'×'+frame.srcH:'');
   }
@@ -1442,6 +1598,7 @@ document.getElementById('shutter').onclick=async function(){
  if(shutterBusy)return;
  if(!stream){toast(T('needCamFirst'));return;}
  if(!video.videoWidth){toast(T('camNotReady'));return;}
+ if(!(await ensureCam())){toast(T('camNotReady'));return;}
  if(levelOn&&Math.abs(lastGamma)>=4){toast(T('tilt')+Math.abs(lastGamma).toFixed(0)+T('tilt2'));}
 
  shutterBusy=true;
@@ -1477,6 +1634,8 @@ document.getElementById('shutter').onclick=async function(){
    var sh2=document.getElementById('shutter');
    sh2.classList.remove('flash');void sh2.offsetWidth;sh2.classList.add('flash');
    openReview(last.photo,last.raw,last.adj,last.z,last.sIdx,false);
+  }else{
+   toast(T('capFail'));
   }
  }finally{
   shutterBusy=false;
@@ -1541,7 +1700,7 @@ function buildEditUI(){
   var r=document.createElement('input');r.type='range';r.min=d.min;r.max=d.max;r.step=1;r.value=0;
   (function(k,rr){
    rr.addEventListener('input',function(){
-    edits[k]=parseInt(rr.value,10);editDirty=true;
+    edits[k]=parseInt(rr.value,10);editDirty=true;editChangeSeq++;
     document.querySelectorAll('#filtRow .filt').forEach(function(b){b.classList.remove('on');});
     document.getElementById('sv_'+k).textContent=fmtV(edits[k]);
     queueRender();
@@ -1550,7 +1709,7 @@ function buildEditUI(){
   row.appendChild(r);sl.appendChild(row);
  });
  document.getElementById('editReset').onclick=function(){
-  edits=zeroEdits();editDirty=false;syncEditUI();
+  edits=zeroEdits();editDirty=false;editChangeSeq++;syncEditUI();
   document.querySelectorAll('#filtRow .filt').forEach(function(b,i){b.classList.toggle('on',i===0);});
   queueRender(true);
  };
@@ -1566,10 +1725,45 @@ function applyFilter(fid){
  if(!f)return;
  edits=zeroEdits();
  for(var k in f.edits)edits[k]=f.edits[k];
- editDirty=true;syncEditUI();
+ editDirty=true;editChangeSeq++;syncEditUI();
  document.querySelectorAll('#filtRow .filt').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-f')===fid);});
  queueRender(true);
 }
+function autoEnhance(){
+ var base=editSmall||editBaseData;
+ if(!base){toast(T('processing'));return;}
+ buildEditUI();
+ var d=base.data,n=base.width*base.height,i,r,g,b;
+ var sumY=0,sumY2=0,sR=0,sG=0,sB=0,hiClip=0,shClip=0,sumSat=0;
+ for(i=0;i<n;i++){
+  r=d[i*4];g=d[i*4+1];b=d[i*4+2];
+  var Y=0.299*r+0.587*g+0.114*b;
+  sumY+=Y;sumY2+=Y*Y;sR+=r;sG+=g;sB+=b;
+  if(Y>248)hiClip++;else if(Y<8)shClip++;
+  var mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+  sumSat+=(mx-mn)/Math.max(1,mx);
+ }
+ var mean=sumY/n,sd=Math.sqrt(Math.max(0,sumY2/n-mean*mean));
+ sR/=n;sG/=n;sB/=n;
+ var avg=(sR+sG+sB)/3;
+ var e=zeroEdits();
+ var ev=Math.log(clamp(112,30,200)/clamp(mean,30,200))/Math.LN2;
+ e.exposure=Math.round(clamp(ev/1.6*100,-45,45));
+ if(sd<48)e.contrast=Math.round(clamp((48-sd)*0.9,0,30));
+ if(hiClip/n>0.02)e.highlights=-Math.round(clamp(hiClip/n*400,10,60));
+ if(shClip/n>0.03)e.shadows=Math.round(clamp(shClip/n*300,10,50));
+ var tR=clamp(avg/Math.max(1,sR),0.9,1.1),tB=clamp(avg/Math.max(1,sB),0.9,1.1);
+ e.temp=Math.round(clamp((tR-tB)*220,-30,30));
+ var wG=clamp(avg/Math.max(1,sG),0.92,1.08);
+ e.tint=Math.round(clamp((wG-1)*160,-20,20));
+ var satMean=sumSat/n;
+ if(satMean<0.25)e.saturation=Math.round(clamp((0.25-satMean)*120,0,25));
+ edits=e;editDirty=true;editChangeSeq++;syncEditUI();
+ document.querySelectorAll('#filtRow .filt').forEach(function(b,i){b.classList.toggle('on',i===0);});
+ queueRender(true);
+ toast(T('enhanced'));
+}
+document.getElementById('smartBtn').onclick=autoEnhance;
 function syncEditUI(){
  EDIT_DEFS.forEach(function(d,idx){
   var rr=document.querySelectorAll('#sliders input[type=range]')[idx];
@@ -1658,22 +1852,76 @@ function renderEditToCanvas(full){
  editCtx.putImageData(out,0,0);
  return editCanvas;
 }
-function renderEdit(full){
- var c=renderEditToCanvas(full);
- return c?c.toDataURL('image/jpeg',0.92):null;
+/* 暗房 Worker：像素管线搬出主线程，滑杆不卡 UI；创建失败/超时自动回退主线程 */
+var editWorker=null,editWorkerOK=false,editSeq=0,editChangeSeq=0;
+function initEditWorker(){
+ if(editWorker||editWorkerOK)return;
+ try{
+  var src='var clamp='+clamp.toString()+';\n'
+   +'var applyEditPixels='+applyEditPixels.toString()+';\n'
+   +'var sharpenInPlace='+sharpenInPlace.toString()+';\n'
+   +'onmessage=function(e){var m=e.data;'
+   +'var img={data:new Uint8ClampedArray(m.buf),width:m.w,height:m.h};'
+   +'applyEditPixels(img,m.w,m.h,m.edits);'
+   +'if(m.edits.sharpness>0)sharpenInPlace(img,m.w,m.h,m.edits.sharpness);'
+   +'postMessage({w:m.w,h:m.h,seq:m.seq,buf:img.data.buffer},[img.data.buffer]);};';
+  editWorker=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+  editWorker.onerror=function(){editWorkerOK=false;};
+  editWorkerOK=true;
+ }catch(e){editWorker=null;editWorkerOK=false;}
+}
+function renderEditAsync(full,cb){
+ var base=full?editBaseData:editSmall;
+ if(!base){cb(null);return;}
+ if(!editWorkerOK||!editWorker){cb(renderEditToCanvas(full));return;}
+ var seq=++editSeq,w=base.width,h=base.height;
+ var buf=new Uint8ClampedArray(base.data);
+ var done=false;
+ var timer=setTimeout(function(){
+  if(done)return;done=true;editWorkerOK=false;
+  cb(renderEditToCanvas(full));
+ },5000);
+ editWorker.onmessage=function(e){
+  var m=e.data;
+  if(done||m.seq!==seq)return;
+  done=true;clearTimeout(timer);
+  var out=new ImageData(new Uint8ClampedArray(m.buf),m.w,m.h);
+  editCanvas.width=m.w;editCanvas.height=m.h;
+  editCtx.putImageData(out,0,0);
+  cb(editCanvas);
+ };
+ try{
+  editWorker.postMessage({w:w,h:h,seq:seq,edits:edits,buf:buf.buffer},[buf.buffer]);
+ }catch(e){
+  done=true;clearTimeout(timer);editWorkerOK=false;
+  cb(renderEditToCanvas(full));
+ }
 }
 function renderEditBlob(cb){
- var c=renderEditToCanvas(true);
- if(!c){cb(null);return;}
- c.toBlob(function(bl){cb(bl);},'image/jpeg',0.92);
+ renderEditAsync(true,function(c){
+  if(!c){cb(null);return;}
+  c.toBlob(function(bl){
+   if(!bl){cb(null);return;}
+   var src=(typeof lastPhoto!=='undefined'&&lastPhoto&&lastPhoto.blob)||null;
+   var dt=(typeof lastPhoto!=='undefined'&&lastPhoto&&lastPhoto.exifDate)||Date.now();
+   applyExif(bl,src,dt).then(function(bl2){cb(bl2);});
+  },'image/jpeg',0.92);
+ });
 }
 function queueRender(now){
  if(renderQueued&&!now)return;
  renderQueued=true;
  var run=function(){
-  renderQueued=false;
-  var url=renderEdit(false);
-  if(url){lastPreviewURL=url;if(inEditTab)rvPhoto.src=url;}
+  var snap=editChangeSeq;
+  renderEditAsync(false,function(c){
+   renderQueued=false;
+   if(c){
+    var url=c.toDataURL('image/jpeg',0.92);
+    revokeURL(lastPreviewURL);
+    lastPreviewURL=url;if(inEditTab)rvPhoto.src=url;
+   }
+   if(snap!==editChangeSeq)queueRender(true);
+  });
  };
  if(now){run();}else{requestAnimationFrame(run);}
 }
@@ -1801,7 +2049,7 @@ async function saveWithMode(mode){
   var ep=await renderEditToPhoto();
   if(ep){
    revokePhoto(lastPhoto);revokeURL(lastPreviewURL);
-   lastPhoto=ep;lastPreviewURL=ep.url;refreshThumb();
+   lastPhoto=ep;lastPreviewURL=dupPhoto(ep).url;refreshThumb();
   }
  }
  var ok=false;
@@ -1825,7 +2073,7 @@ document.getElementById('saveBtn').onclick=function(){
    renderEditToPhoto().then(function(ep){
     if(ep){
      revokePhoto(lastPhoto);revokeURL(lastPreviewURL);
-     lastPhoto=ep;lastPreviewURL=ep.url;refreshThumb();
+     lastPhoto=ep;lastPreviewURL=dupPhoto(ep).url;refreshThumb();
     }
     doSavePhoto(lastPhoto,s.id).then(function(ok){if(ok)toast(T('saved'));});
    });
@@ -1855,6 +2103,7 @@ buildSceneChips();
 applyLang();
 setZoom(1);
 syncToolLabels();
+initEditWorker(); /* 暗房 Worker 预热，失败自动回退主线程 */
 if(location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1'){startCam();}
 else{camFallback(T('notHttps'));}
 })();
