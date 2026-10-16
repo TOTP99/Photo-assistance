@@ -333,7 +333,7 @@ body.en .brand strong,body.en #review .rv-head strong{font-family:inherit}
       <button id="saveAllBtn" data-i18n="saveAll">保存全部</button>
     </div>
   </div>
-  <p class="foot"><span data-i18n="footNote">iPhone 网页无硬件对焦接口；点按为软件测光点，夜景多帧合成降噪；支持时走 ImageCapture 全分辨率</span> · v3.3</p>
+  <p class="foot"><span data-i18n="footNote">iPhone 网页无硬件对焦接口；点按为软件测光点，夜景多帧合成降噪；支持时走 ImageCapture 全分辨率</span> · v3.4</p>
 </div>
 <button class="shutter" id="shutter" aria-label="shutter"></button>
 <div id="review" role="dialog" aria-label="review">
@@ -913,8 +913,8 @@ async function blobToFrame(blob,cap){
  }catch(e){return null}
  finally{if(url)URL.revokeObjectURL(url);if(src&&src.close)src.close()}
 }
-async function captureFrame(cap){
- if(icOK&&imageCapture){
+async function captureFrame(cap,forceVideo){
+ if(icOK&&imageCapture&&!forceVideo){
   try{
    const fr=await blobToFrame(await takePhotoBlob(),cap);
    if(video.paused)video.play().catch(()=>{});
@@ -1177,26 +1177,55 @@ async function runCountdown(sec){
  for(let left=sec;left>0;left--){countdownEl.textContent=left;await sleep(1000)}
  countdownEl.classList.remove('show');
 }
+let capWhy='';
+const sampleMean=img=>{
+ const d=img.data,n=d.length/4,step=Math.max(1,Math.floor(n/2000));
+ let s=0,c=0;
+ for(let i=0;i<n;i+=step){s+=luma(d[i*4],d[i*4+1],d[i*4+2]);c++}
+ return s/c;
+};
+const isBlack=f=>{const b=blackLevel(f);return b>=0&&b<2};
+async function grabFrame(s){
+ let sawBlackIC=false;
+ for(let attempt=0;attempt<3;attempt++){
+  try{
+   let f;
+   if(attempt===0&&s.multiFrame){
+    toast(T('holdStill'));burstbar.classList.add('show');burstFill.style.width='0%';
+    try{f=await captureMultiFrame(icOK?5:7,icOK?180:90,p=>{burstFill.style.width=p*100+'%'})}
+    finally{burstbar.classList.remove('show')}
+   }else{
+    if(attempt>0)await sleep(250);
+    f=await captureFrame(attempt===2?1600:undefined,attempt===2);
+   }
+   if(!f){capWhy='noframe';continue}
+   if(isBlack(f)){
+    capWhy='black';
+    if(!camHealthy()){startCam();await sleep(600)}
+    if(f.fullRes&&attempt<2)sawBlackIC=true;
+    continue;
+   }
+   if(attempt===2&&sawBlackIC&&icOK){icOK=false;syncZoomUI()}
+   return f;
+  }catch(e){capWhy='err:'+((e&&e.name)||'?')}
+ }
+ return null;
+}
 async function doCaptureOne(){
  const s=SCENES[sceneIdx];
- let frame;
- if(s.multiFrame){
-  toast(T('holdStill'));burstbar.classList.add('show');burstFill.style.width='0%';
-  frame=await captureMultiFrame(icOK?5:7,icOK?180:90,p=>{burstFill.style.width=p*100+'%'});
-  burstbar.classList.remove('show');
- }else frame=await captureFrame();
+ capWhy='';
+ const frame=await grabFrame(s);
  if(!frame)return null;
- const bl=blackLevel(frame);
- if(bl>=0&&bl<2&&!camHealthy()){toast(T('camNotReady'));startCam();return null}
  const date=Date.now(),tilt=levelOn?Math.abs(lastGamma):null;
  const raw=await canvasToPhoto(frame.canvas,frame.exifSrc,date);
- if(!raw)return null;
+ if(!raw){capWhy='encode';return null}
  const fullTxt=frame.fullRes?T('fullRes')+(frame.srcW?` ${frame.srcW}×${frame.srcH}`:''):'';
  let adj=fullTxt,photo=raw;
  if(autoOn){
   try{
-   const img=frame.ctx.getImageData(0,0,frame.w,frame.h);
+   const img=frame.ctx.getImageData(0,0,frame.w,frame.h),m0=sampleMean(img);
    adj=enhancePixels(img,s,{multi:!!frame.multi,spot:!!meterPoint,spotLum:spotLum(img,frame.w,frame.h)});
+   if(m0>8&&!(sampleMean(img)>m0*.3))throw 0;
    if(fullTxt)adj=(adj?adj+' · ':'')+fullTxt;
    frame.ctx.putImageData(img,0,0);
    photo=await canvasToPhoto(frame.canvas,frame.exifSrc,date)||raw;
@@ -1230,7 +1259,7 @@ async function shoot(){
    dropCur();cur=results[results.length-1];refreshThumb();
    shutterBtn.classList.remove('flash');void shutterBtn.offsetWidth;shutterBtn.classList.add('flash');
    openReview(cur);
-  }else toast(T('capFail'));
+  }else toast(T('capFail')+(capWhy?' ('+capWhy+')':''));
  }finally{shutterBusy=false;shutterBtn.classList.remove('off')}
 }
 const SH=68;
