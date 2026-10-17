@@ -569,7 +569,7 @@ function toast(m){
  clearTimeout(toastEl._tm);toastEl._tm=setTimeout(()=>toastEl.classList.remove('show'),2200);
 }
 
-let stream=null,track=null,imageCapture=null,facing='environment',camStarting=false;
+let stream=null,track=null,imageCapture=null,facing='environment',camStarting=false,camStartPromise=null,camEpoch=0;
 let hwZoom=false,icOK=false,icFails=0,icCaps=null;
 let sceneIdx=0,autoOn=true,zoom=1,zoomManual=false,sceneManual=false,sceneLockUntil=0,voteScene=-1,voteCount=0;
 let gridMode=0,levelOn=false,useGravity=false,lastGamma=0,meterPoint=null;
@@ -638,40 +638,63 @@ $('timerBtn').onclick=()=>{timerMode={0:3,3:10,10:0}[timerMode];syncToolLabels()
 $('burstBtn').onclick=()=>{burstMode={0:3,3:5,5:0}[burstMode];syncToolLabels()};
 
 function stopStream(){
- if(stream)stream.getTracks().forEach(t=>t.stop());
+ camEpoch++;
+ if(track){try{track.onended=null;track.onmute=null;track.onunmute=null}catch(e){}}
+ if(stream)stream.getTracks().forEach(t=>{try{t.stop()}catch(e){}});
  stream=track=imageCapture=icCaps=null;hwZoom=icOK=false;icFails=0;
+ try{if(video.srcObject)video.srcObject=null}catch(e){}
 }
-function bindTrack(s){
- stream=s;video.srcObject=s;
- video.onloadedmetadata=()=>video.play().catch(()=>{});
- track=s.getVideoTracks()[0]||null;
- if(track)track.onended=()=>{if(!document.hidden&&!reviewOpen)setTimeout(startCam,400)};
- if(track){
-  try{const z=track.getCapabilities().zoom;hwZoom=!!(z&&z.max>z.min)}catch(e){}
-  try{
-   if(typeof ImageCapture!=='undefined'){
-    imageCapture=new ImageCapture(track);
-    icOK=typeof imageCapture.takePhoto==='function';
-    if(icOK&&imageCapture.getPhotoCapabilities)
-     imageCapture.getPhotoCapabilities().then(pc=>{icCaps=pc||null;syncZoomUI()}).catch(()=>{});
-   }
-  }catch(e){imageCapture=null;icOK=false}
+function waitEventOrTimeout(target,event,ms){
+ return new Promise(resolve=>{
+  let done=false;const finish=v=>{if(done)return;done=true;clearTimeout(tm);target.removeEventListener(event,on);resolve(v)};
+  const on=()=>finish(true),tm=setTimeout(()=>finish(false),ms);
+  target.addEventListener(event,on,{once:true});
+ });
+}
+async function waitForVideoFrame(timeout=6500){
+ const until=Date.now()+timeout;
+ while(Date.now()<until){
+  if(video.videoWidth>0&&video.videoHeight>0&&video.readyState>=2&&!video.paused&&!video.ended)return true;
+  await sleep(100);
  }
+ return video.videoWidth>0&&video.readyState>=2&&!video.paused&&!video.ended;
+}
+async function bindTrack(s,epoch){
+ stream=s;video.muted=true;video.autoplay=true;video.playsInline=true;video.srcObject=s;
+ track=s.getVideoTracks()[0]||null;
+ if(!track)throw new Error('NoVideoTrack');
+ track.onended=()=>{if(epoch===camEpoch&&!document.hidden&&!reviewOpen){novideo.style.display='flex';shutterBtn.classList.add('off');setTimeout(()=>{if(!document.hidden&&!reviewOpen)startCam()},500)}};
+ track.onmute=()=>{if(epoch===camEpoch&&!document.hidden){setTimeout(()=>{if(epoch===camEpoch&&track&&track.readyState==='live'&&!camHealthy())recoverCam()},700)}};
+ try{const z=track.getCapabilities().zoom;hwZoom=!!(z&&z.max>z.min)}catch(e){}
+ try{
+  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(!isIOS&&typeof ImageCapture!=='undefined'){
+   imageCapture=new ImageCapture(track);icOK=typeof imageCapture.takePhoto==='function';
+   if(icOK&&imageCapture.getPhotoCapabilities)imageCapture.getPhotoCapabilities().then(pc=>{if(epoch===camEpoch){icCaps=pc||null;syncZoomUI()}}).catch(()=>{});
+  }
+ }catch(e){imageCapture=null;icOK=false}
+ try{await video.play()}catch(e){
+  // iOS Safari may delay playback until metadata/permission state settles; retry once.
+  await sleep(180);try{await video.play()}catch(e2){}
+ }
+ if(video.readyState<1)await waitEventOrTimeout(video,'loadedmetadata',2500);
+ if(!await waitForVideoFrame(6500))throw new Error('VideoFrameTimeout');
+ if(epoch!==camEpoch)throw new Error('CameraSuperseded');
  novideo.style.display='none';shutterBtn.classList.remove('off');
  applyTransform();applyHwZoom();syncZoomUI();
 }
 function applyHwZoom(){
  if(!hwZoom||!track)return;
- try{
-  const c=track.getCapabilities().zoom,z=clamp(zoom,c.min||1,c.max||zoom);
-  if(Math.abs((track.getSettings().zoom||1)-z)>.05)track.applyConstraints({advanced:[{zoom:z}]}).catch(()=>{});
- }catch(e){}
+ try{const c=track.getCapabilities().zoom,z=clamp(zoom,c.min||1,c.max||zoom);if(Math.abs((track.getSettings().zoom||1)-z)>.05)track.applyConstraints({advanced:[{zoom:z}]}).catch(()=>{})}catch(e){}
 }
-const camHealthy=()=>!!(stream&&stream.active&&track&&track.readyState==='live'&&video.videoWidth>0&&video.readyState>=2&&!video.paused&&!video.ended);
+const camHealthy=()=>!!(stream&&stream.active&&track&&track.readyState==='live'&&video.srcObject===stream&&video.videoWidth>0&&video.videoHeight>0&&video.readyState>=2&&!video.paused&&!video.ended);
 async function ensureCam(){
  if(camHealthy())return true;
- startCam();
- for(const t0=Date.now();Date.now()-t0<7000;){await sleep(250);if(camHealthy())return true}
+ if(camStartPromise){try{await camStartPromise}catch(e){}}
+ else await startCam();
+ if(camHealthy())return true;
+ const end=Date.now()+3500;
+ while(Date.now()<end){await sleep(120);if(camHealthy())return true}
  return false;
 }
 function camFallback(msg){
@@ -679,20 +702,43 @@ function camFallback(msg){
  novideo.querySelector('div').innerHTML=msg+T('useSys');
  shutterBtn.classList.add('off');
 }
+async function recoverCam(){
+ if(document.hidden||reviewOpen||camStarting)return;
+ try{await startCam()}catch(e){}
+}
 async function startCam(){
- if(camStarting)return;
- if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){camFallback(T('noCam'));return}
- camStarting=true;stopStream();novideo.style.display='flex';
- const get=(w,h)=>navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:w},height:{ideal:h}},audio:false});
- try{
-  let s;
-  try{s=await get(3840,2160)}
-  catch(e){
-   if(e.name!=='OverconstrainedError'&&e.name!=='ConstraintNotSatisfiedError')throw e;
-   s=await get(1920,1080);
+ if(camStartPromise)return camStartPromise;
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){camFallback(T('noCam'));return false}
+ camStarting=true;novideo.style.display='flex';shutterBtn.classList.add('off');
+ stopStream();
+ let epoch=camEpoch;
+ const requests=[
+  {video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:false},
+  {video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:false},
+  {video:{facingMode:{ideal:facing}},audio:false}
+ ];
+ camStartPromise=(async()=>{
+  let lastError=null;
+  for(let i=0;i<requests.length;i++){
+   let candidate=null;
+   try{
+    candidate=await navigator.mediaDevices.getUserMedia(requests[i]);
+    if(epoch!==camEpoch){candidate.getTracks().forEach(t=>t.stop());return false}
+    await bindTrack(candidate,epoch);
+    if(epoch!==camEpoch)return false;
+    return true;
+   }catch(e){
+    lastError=e;
+    if(candidate)candidate.getTracks().forEach(t=>{try{t.onended=null;t.stop()}catch(_){}});
+    if(stream===candidate){stream=null;track=null;imageCapture=null;try{video.pause();video.srcObject=null}catch(_){}}
+    if(e&&['NotAllowedError','PermissionDeniedError','NotFoundError','NotReadableError','SecurityError'].includes(e.name))break;
+    if(i<requests.length-1){stopStream();epoch=camEpoch;}
+   }
   }
-  camStarting=false;bindTrack(s);
- }catch(e){camStarting=false;camFallback(T('cantOpen')+(e.name||''))}
+  if(epoch===camEpoch)camFallback(T('cantOpen')+((lastError&&lastError.name)||'CameraError'));
+  return false;
+ })().catch(e=>{if(epoch===camEpoch)camFallback(T('cantOpen')+((e&&e.name)||'CameraError'));return false}).finally(()=>{camStarting=false;camStartPromise=null});
+ return camStartPromise;
 }
 $('camBtn').onclick=startCam;
 $('fileBtn').onclick=()=>$('camInput').click();
@@ -914,15 +960,19 @@ async function blobToFrame(blob,cap){
  finally{if(url)URL.revokeObjectURL(url);if(src&&src.close)src.close()}
 }
 async function captureFrame(cap,forceVideo){
- if(icOK&&imageCapture&&!forceVideo){
-  try{
-   const fr=await blobToFrame(await takePhotoBlob(),cap);
-   if(video.paused)video.play().catch(()=>{});
-   if(fr){icFails=0;return fr}
-  }catch(e){}
-  if(++icFails>=2){icOK=false;syncZoomUI()}
+ if(!camHealthy()&&!(await ensureCam()))return null;
+ try{await video.play()}catch(e){}
+ if(!await waitForVideoFrame(2200))return null;
+ const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+ if(!isIOS&&!forceVideo&&icOK&&imageCapture){
+  try{const blob=await takePhotoBlob(),fr=await blobToFrame(blob,cap);if(fr){icFails=0;try{await video.play()}catch(e){}return fr}}catch(e){}
+  if(++icFails>=1){icOK=false;imageCapture=null;syncZoomUI()}
  }
- return video.videoWidth?cropToFrame(video,video.videoWidth,video.videoHeight,cap):null;
+ if(typeof video.requestVideoFrameCallback==='function'){
+  try{await Promise.race([new Promise(resolve=>video.requestVideoFrameCallback(()=>resolve(true))),sleep(800)])}catch(e){}
+ }
+ if(!camHealthy()||!video.videoWidth||video.readyState<2)return null;
+ try{return cropToFrame(video,video.videoWidth,video.videoHeight,cap)}catch(e){return null}
 }
 function blackLevel(frame){
  try{
@@ -1201,8 +1251,9 @@ async function grabFrame(s){
    if(!f){capWhy='noframe';continue}
    if(isBlack(f)){
     capWhy='black';
-    if(!camHealthy()){startCam();await sleep(600)}
-    if(f.fullRes&&attempt<2)sawBlackIC=true;
+    if(f.fullRes){icOK=false;imageCapture=null;syncZoomUI();sawBlackIC=true}
+    if(!camHealthy()){await recoverCam();await waitForVideoFrame(2200)}
+    else await sleep(180);
     continue;
    }
    if(attempt===2&&sawBlackIC&&icOK){icOK=false;syncZoomUI()}
@@ -1236,12 +1287,10 @@ async function doCaptureOne(){
 }
 async function shoot(){
  if(shutterBusy)return;
- if(!stream)return toast(T('needCamFirst'));
- if(!video.videoWidth)return toast(T('camNotReady'));
- if(!(await ensureCam()))return toast(T('camNotReady'));
- if(levelOn&&Math.abs(lastGamma)>=4)toast(T('tilt')+Math.abs(lastGamma).toFixed(0)+T('tilt2'));
  shutterBusy=true;shutterBtn.classList.add('off');
  try{
+  if(!(await ensureCam())){toast(T('camNotReady'));return}
+  if(levelOn&&Math.abs(lastGamma)>=4)toast(T('tilt')+Math.abs(lastGamma).toFixed(0)+T('tilt2'));
   await runCountdown(timerMode);
   const count=burstMode||1,results=[];
   for(let i=0;i<count;i++){
@@ -1741,8 +1790,11 @@ saveSheet.addEventListener('click',e=>{if(e.target===saveSheet)saveSheet.classLi
 
 const secure=location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1';
 document.addEventListener('visibilitychange',()=>{
- if(!document.hidden&&(!stream||!stream.active)&&secure)setTimeout(startCam,300);
+ if(document.hidden)return;
+ if(secure&&!reviewOpen){setTimeout(()=>{if(!document.hidden&&!camHealthy())recoverCam();else if(camHealthy())video.play().catch(()=>{})},300)}
 });
+window.addEventListener('pageshow',()=>{if(secure&&!document.hidden&&!reviewOpen)setTimeout(()=>{if(!camHealthy())recoverCam();else video.play().catch(()=>{})},250)});
+window.addEventListener('pagehide',()=>{if(stream){try{stream.getTracks().forEach(t=>t.stop())}catch(e){};stopStream()}});
 
 applyGrid();buildSceneChips();applyLang();setZoom(1);syncToolLabels();initEditWorker();placeShutter();addEventListener('load',placeShutter);
 if(secure)startCam();else camFallback(T('notHttps'));
